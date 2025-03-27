@@ -84,7 +84,7 @@ def retrieve_documents(
         
     else:  # clarification
         # For clarifications, prioritize retrieval based on enhanced query
-        docs = vectorstore.similarity_search(query, k=10)
+        docs = vectorstore.similarity_search(query, k=25)
         debug("Using enhanced retrieval for clarification", debug_level)
     
     debug(f"Retrieved {len(docs)} initial documents", debug_level)
