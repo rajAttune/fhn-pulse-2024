@@ -25,6 +25,7 @@ wheels/
 .venv/
 ENV/
 .env
+*.pem
 
 # IDE files
 .idea/
@@ -38,10 +39,12 @@ chromadb/
 # Gradio
 gradio_cached_examples/
 flagged/
+.gradio/
 
 # PDF processing outputs
 *.md
 *_chunks.txt
+*.pdf
 
 # Logs
 *.log
