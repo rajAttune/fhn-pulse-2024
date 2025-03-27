@@ -2,6 +2,7 @@
 LangGraph state definition and node functions for RAG chatbot.
 """
 
+import os
 import re
 from typing import Dict, List, Optional, Annotated, TypedDict
 
@@ -100,7 +101,7 @@ def retrieve_docs_node(state: State, api_key: str, chroma_path: str, debug_level
         "query_type": query_type
     }
 
-def generate_response(state: State, api_key: str) -> Dict:
+def generate_response(state: State, api_key: str, knowledge_content: str = "") -> Dict:
     """Generate a response using the retrieved documents as context and chat history"""
     messages = state.get("messages", [])
     docs = state.get("retrieval_documents", [])
@@ -157,20 +158,38 @@ def generate_response(state: State, api_key: str) -> Dict:
     Summarize the documents you find and respond 
     balancing a conversational and professional tone. 
     
-    Bias to provide more information rather than less, anticipating follow-up questions.
 
-    
     {history_section}
-    
-    Context information is below.
+
+    A densely summarized version of this report is below: 
+
+    ---------------------
+    {knowledge_section}
+    ---------------------
+
+    Context information is below, in the form of text chunks retrieved 
+    from a vector database. These chunks also have detailed metadata included.
     ---------------------
     {context}
     ---------------------
+    
+    Bias towards more information rather than less, anticipating
+    follow-up questions. Keep a conversational but professional tone.
 
-    Given the context information and not prior knowledge, answer the question: {question}
+    
+    Given the densely summarized knowledge section and context information 
+    within your chunks, and not prior knowledge, answer the question: {question}
     
     Query type: {query_type}
     """
+    
+    # Add knowledge section if knowledge content exists
+    knowledge_section = ""
+    if knowledge_content:
+        knowledge_section = f"""Structured knowledge base information:
+    ---------------------
+    {knowledge_content}
+    ---------------------"""
     
     # Add history section if history exists
     history_section = ""
@@ -182,14 +201,15 @@ def generate_response(state: State, api_key: str) -> Dict:
     
     prompt = PromptTemplate(
         template=template, 
-        input_variables=["context", "question", "history_section", "query_type"]
+        input_variables=["context", "question", "history_section", "query_type", "knowledge_section"]
     )
     
     formatted_prompt = prompt.format(
         context=context_str, 
         question=query, 
         history_section=history_section,
-        query_type=query_type
+        query_type=query_type,
+        knowledge_section=knowledge_section
     )
     debug("Sending prompt to Gemini")
     
@@ -198,10 +218,10 @@ def generate_response(state: State, api_key: str) -> Dict:
     content = response.content
     
     # Remove any references section that might have been generated despite instructions
-    content = re.sub(r'\n+References:.*?$', '', content, flags=re.DOTALL)
+    # content = re.sub(r'\n+References:.*?$', '', content, flags=re.DOTALL)
     
     # Append our properly formatted sources
-    final_content = content + sources_str
+    final_content = content  #+ sources_str
     
     # Create AIMessage
     ai_message = AIMessage(content=final_content)
@@ -222,9 +242,28 @@ def create_retrieve_docs_node(api_key: str, chroma_path: str, debug_level: int):
         return retrieve_docs_node(state, api_key, chroma_path, debug_level)
     return _retrieve_docs_wrapped
 
+# Function to read knowledge file
+def read_knowledge_file(file_path: str) -> str:
+    """Read and return content from knowledge file"""
+    if not file_path or not os.path.exists(file_path):
+        debug(f"Knowledge file not found: {file_path}")
+        return ""
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            debug(f"Read {len(content)} bytes from knowledge file")
+            return content
+    except Exception as e:
+        debug(f"Error reading knowledge file: {str(e)}")
+        return ""
+
 # Wrapper function to create the generate_response node with configuration
-def create_generate_response_node(api_key: str):
-    """Create a generate_response node with API key injected"""
+def create_generate_response_node(api_key: str, knowledge_path: str = None):
+    """Create a generate_response node with API key and knowledge injected"""
+    # Read knowledge file once at initialization
+    knowledge_content = read_knowledge_file(knowledge_path) if knowledge_path else ""
+    
     def _generate_response_wrapped(state: State) -> Dict:
-        return generate_response(state, api_key)
+        return generate_response(state, api_key, knowledge_content)
     return _generate_response_wrapped

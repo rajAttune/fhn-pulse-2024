@@ -4,6 +4,7 @@ RAG Chatbot application entry point with Gradio UI.
 
 import os
 import sys
+import argparse
 import gradio as gr
 from dotenv import load_dotenv
 
@@ -22,14 +23,27 @@ from rag_utils import debug
 # Load environment variables from .env file
 load_dotenv()
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="RAG Chatbot for FHN Pulse 2024 Report")
+parser.add_argument("--knowledge", dest="knowledge_path",default="knowledge/fhn_pulse_2024.txt", 
+                    help="Path to knowledge base text file")
+parser.add_argument("--chroma", dest="chroma_path", default="./chromadb", 
+                    help="Path to ChromaDB directory (default: ./chromadb)")
+parser.add_argument("--debug", dest="debug_level", type=int, default=1,
+                    help="Debug level: 0=none, 1=basic, 2=verbose (default: 1)")
+args = parser.parse_args()
+
 # Get API key from environment variables
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Set debug level (0 = no debug, 1 = basic debug info)
-DEBUG_LEVEL = int(os.getenv("DEBUG_LEVEL", "1"))
+# Set debug level
+DEBUG_LEVEL = args.debug_level
 
-# Get ChromaDB path from environment variables
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chromadb")
+# Get ChromaDB path
+CHROMA_PATH = args.chroma_path
+
+# Get knowledge file path
+KNOWLEDGE_PATH = args.knowledge_path
 
 # Initialize the memory saver for persistence
 memory = MemorySaver()
@@ -47,7 +61,8 @@ def create_graph():
     )
     
     generate_resp = create_generate_response_node(
-        api_key=GOOGLE_API_KEY
+        api_key=GOOGLE_API_KEY,
+        knowledge_path=KNOWLEDGE_PATH
     )
     
     # Add nodes
@@ -114,6 +129,10 @@ def create_interface():
 # Launch the Gradio interface
 if __name__ == "__main__":
     debug(f"Using ChromaDB from: {CHROMA_PATH}", DEBUG_LEVEL)
+    if KNOWLEDGE_PATH:
+        debug(f"Using knowledge file: {KNOWLEDGE_PATH}", DEBUG_LEVEL)
+    else:
+        debug("No knowledge file specified, using only ChromaDB", DEBUG_LEVEL)
     debug("Launching Gradio interface", DEBUG_LEVEL)
     bot = create_interface()
     bot.launch(share=True)
