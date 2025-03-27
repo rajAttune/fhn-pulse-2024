@@ -1,0 +1,60 @@
+# PDF to RAG Configuration
+
+# PDF extraction settings
+table_strategy: "lines_strict"  # Table detection strategy
+# pages: [0, 1, 2]  # Optional: specify page numbers to extract (0-based)
+
+# Chunking settings
+chunk_size: 1000
+chunk_overlap: 200
+
+# Vector database settings
+collection_name: "annual_report"
+embedding_model: "models/text-embedding-004"
+
+# Document processing settings
+header_levels_to_extract: 4  # Number of heading levels to extract (h1-h4)
+
+# Text preprocessing settings
+preprocess_text: true
+normalize_unicode: true
+normalize_whitespace: true
+fix_pdf_artifacts: true
+remove_control_chars: true
+handle_special_chars: true
+
+# Character replacements for preprocessing
+char_replacements:
+  '…': '...'
+  '–': '-'
+  '—': '-'
+  ''': "'"
+  ''': "'"
+  '"': '"'
+  '"': '"'
+  '•': '*'
+
+# Common hyphenated words to join
+common_words:
+  - "therefore"
+  - "however"
+  - "although"
+  - "nevertheless"
+  - "furthermore"
+  - "consequently"
+  - "nonetheless"
+  - "meanwhile"
+
+# Table detection settings
+detect_html_tables: true
+
+# Future settings (uncommented and configured when needed)
+
+# Image processing settings (for future use)
+# extract_images: true
+# image_min_size: 100  # Minimum image size in pixels to consider (filters out tiny icons)
+# ignore_logos: true   # Attempt to ignore logo images
+
+# AI model settings for image analysis (for future use)
+# image_description_model: "gemini-pro-vision"
+# image_description_prompt: "Describe this image in detail, focusing on what information it conveys rather than visual characteristics. If it's a chart or graph, explain the data trends and insights."
