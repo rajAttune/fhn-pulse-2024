@@ -122,9 +122,8 @@ def create_interface():
         title="FHN Pulse 2024 Report Chatbot",
         description="Ask questions about the Financial Health Network Pulse 2024 report on financial health in the United States.",
         examples=[
-            "What are the key findings of the FHN Pulse 2024 report?",
             "How did financial health trends change in 2024?",
-            "What recommendations does the report make for financial institutions?"
+            "What is the FinHealth Score?"
         ]
     )
     return bot

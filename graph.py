@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Annotated, TypedDict
 
 from langchain.docstore.document import Document
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_anthropic import ChatAnthropic
 from langchain.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -116,6 +117,12 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
         temperature=0.7,
         google_api_key=api_key
     )
+    # # Initialize Claude LLM (but keep Gemini for everything else)
+    # llm = ChatAnthropic(
+    #     model="claude-3-7-sonnet-latest",
+    #     temperature=0.7,
+    #     anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")  # Get from environment
+    # )
     
     if not query or not docs:
         debug("No query or documents to generate response from")
@@ -187,6 +194,8 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
     response, put numbers e.g. (1), (2), (3) ..., and then a reference key at the end titled
     "Sources:", followed by the numbered list of sources, each with a document and page number.
     Include Table or Figure number where appropriate.
+
+    Don't repeat sources, keep only one reference per source in your response.
     """
     
     # Add knowledge section if knowledge content exists
@@ -217,7 +226,7 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
         query_type=query_type,
         knowledge_section=knowledge_section
     )
-    debug("Sending prompt to Gemini")
+    debug("Sending prompt to generate final response")
     
     # Get response from LLM
     response = llm.invoke(formatted_prompt)
