@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Annotated, TypedDict
 
 from langchain.docstore.document import Document
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_anthropic import ChatAnthropic
+#from langchain_anthropic import ChatAnthropic
 from langchain.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 
