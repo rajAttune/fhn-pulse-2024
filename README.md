@@ -50,7 +50,7 @@ Parameters:
 ### Step 4: Run the Chatbot Interface
 
 ```bash
-python app.py --chroma ./chromadb --debug 1
+python app.py
 ```
 
 Parameters:
