@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Annotated, TypedDict
 
 from langchain.docstore.document import Document
 from langchain_google_genai import ChatGoogleGenerativeAI
-#from langchain_anthropic import ChatAnthropic
+from langchain_anthropic import ChatAnthropic
 from langchain.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -117,12 +117,12 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
         temperature=0.7,
         google_api_key=api_key
     )
-    # # Initialize Claude LLM (but keep Gemini for everything else)
-    # llm = ChatAnthropic(
-    #     model="claude-3-7-sonnet-latest",
-    #     temperature=0.7,
-    #     anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")  # Get from environment
-    # )
+    # Initialize Claude LLM (but keep Gemini for everything else)
+    llm = ChatAnthropic(
+        model="claude-3-7-sonnet-latest",
+        temperature=0.7,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY")  # Get from environment
+    )
     
     if not query or not docs:
         debug("No query or documents to generate response from")
