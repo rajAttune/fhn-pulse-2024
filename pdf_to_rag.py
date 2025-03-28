@@ -27,7 +27,7 @@ except ImportError:
 
 # ChromaDB and embedding dependencies
 try:
-    from langchain_community.vectorstores import Chroma
+    from langchain_chroma import Chroma
     from langchain_google_genai import GoogleGenerativeAIEmbeddings
     from langchain.text_splitter import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
     from langchain.docstore.document import Document
@@ -35,7 +35,7 @@ try:
     from dotenv import load_dotenv
 except ImportError:
     print("Error: Required dependencies missing. Install with:", file=sys.stderr)
-    print("pip install langchain langchain-community langchain-google-genai chromadb python-dotenv", file=sys.stderr)
+    print("pip install langchain langchain-chroma langchain-google-genai chromadb python-dotenv", file=sys.stderr)
     sys.exit(1)
 
 # Debug function
@@ -277,7 +277,7 @@ class PDFProcessor:
 
 
 class MultiplePDFProcessor:
-    """Processes multiple PDF files and creates a single vector database"""
+    """Processes multiple PDF files and creates a single vector database with client reuse"""
     
     def __init__(self, source_dir: str, output_dir: str = "./chromadb", debug_level: int = 1, force: bool = False):
         """Initialize the multiple PDF processor"""
@@ -285,6 +285,11 @@ class MultiplePDFProcessor:
         self.output_dir = output_dir
         self.debug_level = debug_level
         self.force = force
+        
+        # Initialize database client and embeddings once
+        self.client = None
+        self.embeddings = None
+        self.vectordb = None
         
     def get_pdf_files(self) -> List[str]:
         """Get all PDF files in the source directory"""
@@ -303,23 +308,132 @@ class MultiplePDFProcessor:
         debug(f"Found {len(pdf_files)} PDF files in {self.source_dir}", 1, self.debug_level)
         return pdf_files
     
-    def process_all(self) -> None:
-        """Process all PDF files and create a single vector database"""
-        # Get PDF files
-        pdf_files = self.get_pdf_files()
-        if not pdf_files:
-            debug(f"No PDF files found in {self.source_dir}", 0, self.debug_level)
-            return
+    def initialize_database(self) -> bool:
+        """Initialize the vector database client and embeddings"""
+        debug("Initializing vector database client and embeddings", 1, self.debug_level)
         
         # Check if environment variable for API key is set
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             debug("Warning: GOOGLE_API_KEY environment variable not found", 0, self.debug_level)
             debug("Set your API key with: export GOOGLE_API_KEY=your_key_here", 0, self.debug_level)
+            return False
+        
+        try:
+            # Initialize embedding function
+            self.embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/text-embedding-004",
+                google_api_key=api_key
+            )
+            
+            # Create output directory if it doesn't exist
+            os.makedirs(self.output_dir, exist_ok=True)
+            
+            # Clean existing database if force flag is set
+            if self.force and os.path.exists(self.output_dir) and os.listdir(self.output_dir):
+                debug(f"Force flag set, removing existing database at {self.output_dir}", 1, self.debug_level)
+                import shutil
+                for item in os.listdir(self.output_dir):
+                    item_path = os.path.join(self.output_dir, item)
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                    else:
+                        os.remove(item_path)
+            
+            # Initialize ChromaDB client
+            self.client = chromadb.PersistentClient(path=self.output_dir)
+            
+            # Check if our collection already exists
+            collection_name = "rag_collection"
+            if collection_name in [col.name for col in self.client.list_collections()]:
+                debug(f"Found existing '{collection_name}' collection", 1, self.debug_level)
+                # Connect to existing collection
+                self.vectordb = Chroma(
+                    client=self.client,
+                    collection_name=collection_name,
+                    embedding_function=self.embeddings
+                )
+            else:
+                debug("No existing collection found, will create one when adding documents", 1, self.debug_level)
+                # We'll create the collection when adding the first documents
+                self.vectordb = None
+            
+            return True
+            
+        except Exception as e:
+            debug(f"Error initializing database: {str(e)}", 0, self.debug_level)
+            if self.debug_level >= 2:
+                import traceback
+                traceback.print_exc()
+            return False
+    
+    def add_chunks_to_database(self, chunks: List[Document]) -> bool:
+        """Add chunks to the vector database"""
+        if not chunks:
+            debug("No chunks to add", 1, self.debug_level)
+            return True
+        
+        try:
+            debug(f"Adding {len(chunks)} chunks to vector database", 1, self.debug_level)
+            
+            # Generate UUIDs for the chunks
+            from uuid import uuid4
+            chunk_ids = [str(uuid4()) for _ in range(len(chunks))]
+            
+            # If vectordb hasn't been created yet, create it with the first batch
+            if self.vectordb is None:
+                debug("Creating new ChromaDB collection", 1, self.debug_level)
+                
+                # Get or create the collection
+                collection = self.client.get_or_create_collection("rag_collection")
+                
+                self.vectordb = Chroma(
+                    client=self.client,
+                    collection_name="rag_collection",
+                    embedding_function=self.embeddings
+                )
+                
+                # Add documents with explicit IDs
+                self.vectordb.add_documents(documents=chunks, ids=chunk_ids)
+            else:
+                # Process in batches to avoid memory issues
+                batch_size = 100
+                total_batches = (len(chunks) + batch_size - 1) // batch_size
+                
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:min(i+batch_size, len(chunks))]
+                    batch_ids = chunk_ids[i:min(i+batch_size, len(chunks))]
+                    batch_num = i // batch_size + 1
+                    debug(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)", 2, self.debug_level)
+                    
+                    # Add documents with explicit IDs
+                    self.vectordb.add_documents(documents=batch, ids=batch_ids)
+                    
+                    debug(f"Batch {batch_num} processed", 2, self.debug_level)
+            
+            return True
+            
+        except Exception as e:
+            debug(f"Error adding chunks to database: {str(e)}", 0, self.debug_level)
+            if self.debug_level >= 2:
+                import traceback
+                traceback.print_exc()
+            return False
+    
+    def process_all(self) -> None:
+        """Process all PDF files and add them to the vector database"""
+        # Get PDF files
+        pdf_files = self.get_pdf_files()
+        if not pdf_files:
+            debug(f"No PDF files found in {self.source_dir}", 0, self.debug_level)
             return
         
-        # Process each PDF file to extract chunks
-        all_chunks = []
+        # Initialize database
+        if not self.initialize_database():
+            debug("Failed to initialize database", 0, self.debug_level)
+            return
+        
+        # Process each PDF file and add to database
         success_count = 0
         
         for i, pdf_file in enumerate(pdf_files):
@@ -327,82 +441,20 @@ class MultiplePDFProcessor:
                 debug(f"Processing file {i+1}/{len(pdf_files)}: {pdf_file}", 1, self.debug_level)
                 processor = PDFProcessor(pdf_file, self.debug_level, self.force)
                 chunks = processor.process()
+                
                 if chunks:
-                    all_chunks.extend(chunks)
-                    debug(f"Added {len(chunks)} chunks from {pdf_file}", 1, self.debug_level)
-                success_count += 1
+                    if self.add_chunks_to_database(chunks):
+                        debug(f"Added {len(chunks)} chunks from {pdf_file} to database", 1, self.debug_level)
+                        success_count += 1
+                else:
+                    debug(f"No chunks generated for {pdf_file}", 1, self.debug_level)
             except Exception as e:
                 debug(f"Error processing {pdf_file}: {str(e)}", 0, self.debug_level)
                 if self.debug_level >= 2:
                     import traceback
                     traceback.print_exc()
         
-        # Only create the vector database once at the end
-        if all_chunks:
-            self.create_vector_db(all_chunks)
-        
         debug(f"PDF processing complete: {success_count}/{len(pdf_files)} files processed successfully", 1, self.debug_level)
-    
-    def create_vector_db(self, all_chunks: List[Document]) -> None:
-        """Create a vector database from all chunks"""
-        debug(f"Creating vector database with {len(all_chunks)} total chunks", 1, self.debug_level)
-        
-        # Initialize embedding function
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/text-embedding-004",
-            google_api_key=os.environ.get("GOOGLE_API_KEY")
-        )
-        
-        # Create output directory if it doesn't exist
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Clean existing database if force flag is set
-        if self.force and os.path.exists(self.output_dir):
-            debug(f"Force flag set, removing existing database at {self.output_dir}", 1, self.debug_level)
-            import shutil
-            for item in os.listdir(self.output_dir):
-                item_path = os.path.join(self.output_dir, item)
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
-        
-        try:
-            # Create the vector database - we do this just once with all chunks
-            debug(f"Creating ChromaDB at {self.output_dir}", 1, self.debug_level)
-            
-            # Process in batches to avoid memory issues
-            batch_size = 100
-            total_batches = (len(all_chunks) + batch_size - 1) // batch_size
-            
-            for i in range(0, len(all_chunks), batch_size):
-                batch = all_chunks[i:min(i+batch_size, len(all_chunks))]
-                batch_num = i // batch_size + 1
-                debug(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)", 1, self.debug_level)
-                
-                # For first batch, create the database
-                if i == 0:
-                    vectordb = Chroma.from_documents(
-                        documents=batch,
-                        embedding=embeddings,
-                        persist_directory=self.output_dir
-                    )
-                # For subsequent batches, add to existing database
-                else:
-                    vectordb.add_documents(documents=batch)
-                
-                # Persist after each batch
-                vectordb.persist()
-                debug(f"Batch {batch_num} processed and saved", 1, self.debug_level)
-            
-            debug(f"Vector database created with {len(all_chunks)} chunks", 1, self.debug_level)
-            
-        except Exception as e:
-            debug(f"Error creating vector database: {str(e)}", 0, self.debug_level)
-            if self.debug_level >= 2:
-                import traceback
-                traceback.print_exc()
-            raise
 
 
 def main():
