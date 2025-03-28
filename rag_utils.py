@@ -208,10 +208,11 @@ def rerank_documents(
     You are a document reranking system specialized in financial reports. 
     Your task is to rerank the following documents based on their relevance to the query.
     Pay special attention to:
+
     1. Direct answers to the query
     2. Recent statistics and data points
     3. Tables that contain relevant information
-    4. Section headers that match query terms
+    4. Section headers and other metadata that match query terms
     
     Query: {query}
     
