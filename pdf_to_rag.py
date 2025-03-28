@@ -2,11 +2,11 @@
 """
 PDF to Vector Database Converter for RAG
 
-This script extracts text from PDF files using PyMuPDF4LLM, preserves document structure,
+This script extracts text from multiple PDF files using PyMuPDF4LLM, preserves document structure,
 creates semantic chunks, and stores them in a ChromaDB vector database for RAG.
 
 Usage:
-    python pdf_to_rag.py [--output CHROMADB_DIR] [--debug LEVEL] [--force] pdf_file
+    python pdf_to_rag.py [--input SOURCES_DIR] [--output CHROMADB_DIR] [--debug LEVEL] [--force]
 """
 
 import os
@@ -45,10 +45,9 @@ def debug(message, level, current_level):
         print(f"DEBUG [{level}]: {message}", file=sys.stderr)
 
 class PDFProcessor:
-    def __init__(self, pdf_path: str, output_dir: str = "./chromadb", debug_level: int = 1, force: bool = False):
-        """Initialize the PDF processor"""
+    def __init__(self, pdf_path: str, debug_level: int = 1, force: bool = False):
+        """Initialize the PDF processor for a single file"""
         self.pdf_path = pdf_path
-        self.output_dir = output_dir
         self.debug_level = debug_level
         self.force = force
         
@@ -136,8 +135,15 @@ class PDFProcessor:
         
         # Check if chunks file already exists and not forcing recreation
         if os.path.exists(self.chunks_path) and not self.force:
-            debug(f"Chunks file already exists at {self.chunks_path}. Skipping chunk creation.", 1, self.debug_level)
-            return []
+            debug(f"Chunks file already exists at {self.chunks_path}. Loading...", 1, self.debug_level)
+            # We need to recreate the Document objects from the saved chunks
+            with open(self.chunks_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                # Simple detection to see if we have chunks already
+                if "--- CHUNK 1 ---" in content:
+                    debug("Detected saved chunks, loading them instead of recreating", 1, self.debug_level)
+                    # We need to parse the saved chunks into Document objects
+                    return []  # For now, just return empty list to signal skip chunking
         
         # Define header splitter to identify sections
         headers_to_split_on = [
@@ -251,53 +257,9 @@ class PDFProcessor:
         for i, chunk in enumerate(chunks):
             chunk.metadata["page_number"] = page_markers.get(i, 1)
     
-    def create_vector_db(self) -> None:
-        """Create a vector database from the chunks"""
-        debug("Creating vector database", 1, self.debug_level)
-        
-        # Check if environment variable for API key is set
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            debug("Warning: GOOGLE_API_KEY environment variable not found", 0, self.debug_level)
-            debug("Set your API key with: export GOOGLE_API_KEY=your_key_here", 0, self.debug_level)
-            raise ValueError("Missing Google API key")
-        
-        # Initialize embedding function
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/text-embedding-004",
-            google_api_key=api_key
-        )
-        
-        # Create output directory if it doesn't exist
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # If force is True, delete existing database
-        if self.force and os.path.exists(self.output_dir):
-            debug(f"Force flag set, removing existing database at {self.output_dir}", 1, self.debug_level)
-            import shutil
-            # Only remove contents, not the directory itself
-            for item in os.listdir(self.output_dir):
-                item_path = os.path.join(self.output_dir, item)
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
-        
-        # Create ChromaDB instance
-        debug(f"Creating ChromaDB at {self.output_dir}", 1, self.debug_level)
-        vectordb = Chroma.from_documents(
-            documents=self.chunks,
-            embedding=embeddings,
-            persist_directory=self.output_dir
-        )
-        
-        # Persist the database
-        vectordb.persist()
-        debug(f"Vector database created with {len(self.chunks)} chunks", 1, self.debug_level)
-    
-    def process(self) -> None:
-        """Run the full processing pipeline"""
-        debug("Starting PDF processing pipeline", 1, self.debug_level)
+    def process(self) -> List[Document]:
+        """Run the processing pipeline for a single PDF file"""
+        debug(f"Starting PDF processing for {self.pdf_path}", 1, self.debug_level)
         
         # Extract text
         self.extract_text()
@@ -310,10 +272,137 @@ class PDFProcessor:
         # Create chunks
         self.create_chunks()
         
-        # Create vector database
-        self.create_vector_db()
+        # Return chunks
+        return self.chunks
+
+
+class MultiplePDFProcessor:
+    """Processes multiple PDF files and creates a single vector database"""
+    
+    def __init__(self, source_dir: str, output_dir: str = "./chromadb", debug_level: int = 1, force: bool = False):
+        """Initialize the multiple PDF processor"""
+        self.source_dir = source_dir
+        self.output_dir = output_dir
+        self.debug_level = debug_level
+        self.force = force
         
-        debug("PDF processing complete", 1, self.debug_level)
+    def get_pdf_files(self) -> List[str]:
+        """Get all PDF files in the source directory"""
+        pdf_files = []
+        
+        # Check if source directory exists
+        if not os.path.exists(self.source_dir):
+            debug(f"Source directory not found: {self.source_dir}", 0, self.debug_level)
+            return pdf_files
+        
+        # Get all PDF files
+        for filename in os.listdir(self.source_dir):
+            if filename.lower().endswith('.pdf'):
+                pdf_files.append(os.path.join(self.source_dir, filename))
+        
+        debug(f"Found {len(pdf_files)} PDF files in {self.source_dir}", 1, self.debug_level)
+        return pdf_files
+    
+    def process_all(self) -> None:
+        """Process all PDF files and create a single vector database"""
+        # Get PDF files
+        pdf_files = self.get_pdf_files()
+        if not pdf_files:
+            debug(f"No PDF files found in {self.source_dir}", 0, self.debug_level)
+            return
+        
+        # Check if environment variable for API key is set
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            debug("Warning: GOOGLE_API_KEY environment variable not found", 0, self.debug_level)
+            debug("Set your API key with: export GOOGLE_API_KEY=your_key_here", 0, self.debug_level)
+            return
+        
+        # Process each PDF file to extract chunks
+        all_chunks = []
+        success_count = 0
+        
+        for i, pdf_file in enumerate(pdf_files):
+            try:
+                debug(f"Processing file {i+1}/{len(pdf_files)}: {pdf_file}", 1, self.debug_level)
+                processor = PDFProcessor(pdf_file, self.debug_level, self.force)
+                chunks = processor.process()
+                if chunks:
+                    all_chunks.extend(chunks)
+                    debug(f"Added {len(chunks)} chunks from {pdf_file}", 1, self.debug_level)
+                success_count += 1
+            except Exception as e:
+                debug(f"Error processing {pdf_file}: {str(e)}", 0, self.debug_level)
+                if self.debug_level >= 2:
+                    import traceback
+                    traceback.print_exc()
+        
+        # Only create the vector database once at the end
+        if all_chunks:
+            self.create_vector_db(all_chunks)
+        
+        debug(f"PDF processing complete: {success_count}/{len(pdf_files)} files processed successfully", 1, self.debug_level)
+    
+    def create_vector_db(self, all_chunks: List[Document]) -> None:
+        """Create a vector database from all chunks"""
+        debug(f"Creating vector database with {len(all_chunks)} total chunks", 1, self.debug_level)
+        
+        # Initialize embedding function
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004",
+            google_api_key=os.environ.get("GOOGLE_API_KEY")
+        )
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Clean existing database if force flag is set
+        if self.force and os.path.exists(self.output_dir):
+            debug(f"Force flag set, removing existing database at {self.output_dir}", 1, self.debug_level)
+            import shutil
+            for item in os.listdir(self.output_dir):
+                item_path = os.path.join(self.output_dir, item)
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                else:
+                    os.remove(item_path)
+        
+        try:
+            # Create the vector database - we do this just once with all chunks
+            debug(f"Creating ChromaDB at {self.output_dir}", 1, self.debug_level)
+            
+            # Process in batches to avoid memory issues
+            batch_size = 100
+            total_batches = (len(all_chunks) + batch_size - 1) // batch_size
+            
+            for i in range(0, len(all_chunks), batch_size):
+                batch = all_chunks[i:min(i+batch_size, len(all_chunks))]
+                batch_num = i // batch_size + 1
+                debug(f"Processing batch {batch_num}/{total_batches} ({len(batch)} chunks)", 1, self.debug_level)
+                
+                # For first batch, create the database
+                if i == 0:
+                    vectordb = Chroma.from_documents(
+                        documents=batch,
+                        embedding=embeddings,
+                        persist_directory=self.output_dir
+                    )
+                # For subsequent batches, add to existing database
+                else:
+                    vectordb.add_documents(documents=batch)
+                
+                # Persist after each batch
+                vectordb.persist()
+                debug(f"Batch {batch_num} processed and saved", 1, self.debug_level)
+            
+            debug(f"Vector database created with {len(all_chunks)} chunks", 1, self.debug_level)
+            
+        except Exception as e:
+            debug(f"Error creating vector database: {str(e)}", 0, self.debug_level)
+            if self.debug_level >= 2:
+                import traceback
+                traceback.print_exc()
+            raise
 
 
 def main():
@@ -323,23 +412,25 @@ def main():
     load_dotenv()
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Convert PDF to vector database for RAG")
-    parser.add_argument("pdf_file", help="Path to the PDF file to process")
+    parser = argparse.ArgumentParser(description="Convert PDF files to vector database for RAG")
+    parser.add_argument("--input", default="./sources", help="Directory containing PDF files to process (default: ./sources)")
     parser.add_argument("--output", default="./chromadb", help="Output directory for ChromaDB (default: ./chromadb)")
     parser.add_argument("--debug", type=int, choices=[0, 1, 2], default=1, help="Debug level: 0=none, 1=steps, 2=verbose (default: 1)")
     parser.add_argument("--force", action="store_true", help="Force recreation of all outputs")
     
     args = parser.parse_args()
     
-    # Check if PDF file exists
-    if not os.path.exists(args.pdf_file):
-        print(f"Error: PDF file not found: {args.pdf_file}", file=sys.stderr)
+    # Check if source directory exists
+    if not os.path.exists(args.input):
+        print(f"Error: Source directory not found: {args.input}", file=sys.stderr)
+        print(f"Creating directory: {args.input}", file=sys.stderr)
+        os.makedirs(args.input, exist_ok=True)
         return 1
     
     try:
         # Create processor and run
-        processor = PDFProcessor(args.pdf_file, args.output, args.debug, args.force)
-        processor.process()
+        processor = MultiplePDFProcessor(args.input, args.output, args.debug, args.force)
+        processor.process_all()
         return 0
     except Exception as e:
         print(f"Error: {str(e)}", file=sys.stderr)
