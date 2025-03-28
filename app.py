@@ -25,7 +25,7 @@ load_dotenv()
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="RAG Chatbot for FHN Pulse 2024 Report")
-parser.add_argument("--knowledge", dest="knowledge_path",default="knowledge/fhn_pulse_2024.txt", 
+parser.add_argument("--knowledge", dest="knowledge_path",default=None, 
                     help="Path to knowledge base text file")
 parser.add_argument("--chroma", dest="chroma_path", default="./chromadb", 
                     help="Path to ChromaDB directory (default: ./chromadb)")

@@ -144,8 +144,10 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
     query_type = state.get("query_type", "new_topic")
     
     # Custom prompt template - modified to include PDF structure awareness
-    template = """You are a financial health expert and consultant designed to
-    provide insights from the FHN Pulse 2024 report on financial health in the United States.
+    template = """You are a financial health expert and consultant who
+    provides insights on financial health in the United States, based on
+    reports from the Financial Health Network (FHN), which used to be known
+    as Center for Financial Services Innovation (CFSI).
 
     You have several sources of knowledge to rely on that are described below in order
     of decreasing priority.
@@ -153,46 +155,38 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
     If you don't find something in these
     knowledge sources, just say so, and don't make up anything else!!!
     
-    When referencing information, include page numbers when available.
-    Pay special attention to tables and figures in the report and include
-    those as references when available.
-    
-    Summarize the documents you find and respond 
-    balancing a conversational and professional tone. 
-    
-    KNOWLEDGE SOURCE #1: Dense summary of this report
-
-    ---------------------
-    {knowledge_section}
-    ---------------------
-
-
-    KNOWLEDGE SOURCE #2: Retrieved chunks from vector database.
-
-    
+ 
     Context information is below, in the form of text chunks retrieved 
     from a vector database. These chunks also have detailed metadata included.
     ---------------------
     {context}
     ---------------------
 
-    KNOWLEDGE SOURCE #3: Chat history
-  
+
     This is just the chat history so you can maintain conversation in context. This may
     not have the knowledge you need.
     {history_section}
 
-    A densely summarized version of this report is below: 
+    Use only what you find in the above 3 knowledge sources, and nothing else. 
+    If you don't find the answer in these knowledge sources, just say so.
 
-
+       
+    Summarize the documents you find and respond 
+    balancing a conversational and professional tone. 
+    
     Bias towards more information rather than less, anticipating
     follow-up questions. Keep a conversational but professional tone.
 
     
     Given the densely summarized knowledge section and context information 
-    within your chunks, and not prior knowledge, answer the question: {question}
+    within your chunks, and NOT prior knowledge, answer the question: {question}
     
     Query type: {query_type}
+
+    Include references wherever possible in the following format. In the body of your 
+    response, put numbers e.g. (1), (2), (3) ..., and then a reference key at the end titled
+    "Sources:", followed by the numbered list of sources, each with a document and page number.
+    Include Table or Figure number where appropriate.
     """
     
     # Add knowledge section if knowledge content exists

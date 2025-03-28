@@ -112,16 +112,16 @@ def retrieve_documents(
     
     if query_type == "new_topic":
         # For new topics, just use the current query
-        docs = vectorstore.similarity_search(query, k=10)
+        docs = vectorstore.similarity_search(query, k=15)
         debug("Using standard retrieval for new topic", debug_level)
         
     elif query_type == "followup":
         # For follow-ups, try hybrid approach
         # 1. Retrieve based on enhanced query
-        enhanced_docs = vectorstore.similarity_search(query, k=7)
+        enhanced_docs = vectorstore.similarity_search(query, k=15)
         
         # 2. Also retrieve based on original query with higher k value
-        original_docs = vectorstore.similarity_search(original_query, k=5)
+        original_docs = vectorstore.similarity_search(original_query, k=10)
         
         # Combine documents with deduplication (prioritize enhanced results)
         seen_ids = set()
@@ -220,7 +220,7 @@ def rerank_documents(
     
     Return a JSON list of document indices in descending order of relevance to the query.
     For example: [3, 1, 5, 2, 4] means document 3 is most relevant, followed by 1, etc.
-    Only return the JSON list, no other text.
+    Only return the JSON list, no other text. Each index is ALWAYS an integer, not a string.
     """
     
     # Initialize reranker LLM
