@@ -10,3 +10,4 @@ langchain-core>=0.1.10
 langchain-google-genai>=0.0.5
 langgraph>=0.0.19
 chromadb>=0.4.18
+langchain-chroma

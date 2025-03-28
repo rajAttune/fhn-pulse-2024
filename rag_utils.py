@@ -5,7 +5,7 @@ Utilities for RAG operations including document retrieval, reranking, and format
 import os
 import json
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from langchain.docstore.document import Document
 from langchain_community.vectorstores import Chroma
@@ -18,6 +18,66 @@ def debug(message, debug_level=1):
         import sys
         print(f"DEBUG: {message}", file=sys.stderr)
 
+# LLM-based query analysis functions
+def analyze_query_with_llm(query: str, last_exchange: Dict[str, str], api_key: str, task: str = "classify") -> str:
+    """Use LLM to either classify query type or extract key terms"""
+    if not query:
+        return "new_topic" if task == "classify" else ""
+        
+    # Initialize LLM with lower temperature for more deterministic outputs
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-lite",
+        temperature=0.1,
+        google_api_key=api_key
+    )
+    
+    last_user_query = last_exchange.get("user", "") if last_exchange else ""
+    last_assistant_response = last_exchange.get("assistant", "") if last_exchange else ""
+    
+    if task == "classify":
+        prompt = f"""Analyze this conversation:
+        
+Previous user query: "{last_user_query}"
+Previous assistant response (first 100 chars): "{last_assistant_response[:100]}..."
+Current user query: "{query}"
+
+Classify the current query as one of:
+- "new_topic": An independent question not directly related to previous exchanges
+- "followup": A question seeking more information about the previous topic
+- "clarification": A question directly referring to something mentioned before
+
+Return only one of these three classifications without explanation."""
+
+    else:  # extract key terms
+        prompt = f"""Extract 3-5 key terms from this text that would be helpful for retrieving relevant information:
+
+"{query}"
+
+Return only the key terms separated by spaces, without explanations or formatting."""
+
+    try:
+        response = llm.invoke(prompt)
+        result = response.content.strip()
+        
+        # Handle classification task
+        if task == "classify" and result not in ["new_topic", "followup", "clarification"]:
+            # Default if not matching expected values
+            return "new_topic"
+        
+        return result
+    except Exception as e:
+        debug(f"Error using LLM for query analysis: {e}")
+        # Fallback results
+        return "new_topic" if task == "classify" else ""
+
+def classify_query_type(query: str, last_exchange: Dict[str, str], api_key: str) -> str:
+    """Classify query as new topic, follow-up, or clarification using LLM"""
+    return analyze_query_with_llm(query, last_exchange, api_key, task="classify")
+
+def extract_key_terms(query: str, api_key: str) -> str:
+    """Extract key terms from query using LLM"""
+    return analyze_query_with_llm(query, {}, api_key, task="extract")
+
 # Document retrieval functions
 def get_vectorstore(api_key: str, chroma_path: str):
     """Initialize and return the vector store"""
@@ -28,6 +88,7 @@ def get_vectorstore(api_key: str, chroma_path: str):
     
     return Chroma(
         persist_directory=chroma_path,
+        collection_name="rag_collection",
         embedding_function=embeddings
     )
 
@@ -203,7 +264,7 @@ def rerank_documents(
         return docs[:5]
 
 # Query enhancement
-def enhance_query_with_history(query: str, history: List[Dict[str, str]]) -> str:
+def enhance_query_with_history(query: str, history: List[Dict[str, str]], api_key: str) -> str:
     """Enhance query with history based on query type detection"""
     if not history:
         return query
@@ -213,8 +274,8 @@ def enhance_query_with_history(query: str, history: List[Dict[str, str]]) -> str
     if not last_exchange:
         return query
     
-    # Attempt to classify query type
-    query_type = classify_query_type(query, last_exchange)
+    # Classify query type using LLM
+    query_type = classify_query_type(query, last_exchange, api_key)
     
     # Apply enhancement strategy based on query type
     if query_type == "new_topic":
@@ -223,8 +284,7 @@ def enhance_query_with_history(query: str, history: List[Dict[str, str]]) -> str
         
     elif query_type == "followup":
         # Follow-up question - add key terms from last exchange
-        last_user_query = last_exchange.get("user", "")
-        key_terms = extract_key_terms(last_user_query)
+        key_terms = extract_key_terms(last_exchange.get("user", ""), api_key)
         # Combine but prioritize current query
         return f"{query} (context: {key_terms})"
         
@@ -239,63 +299,6 @@ def enhance_query_with_history(query: str, history: List[Dict[str, str]]) -> str
         
     # Default fallback
     return query
-
-def classify_query_type(query: str, last_exchange: Dict[str, str]) -> str:
-    """Classify query as new topic, follow-up, or clarification"""
-    query = query.lower()
-    last_query = last_exchange.get("user", "").lower()
-    
-    # Check for explicit reference words
-    reference_terms = ["it", "that", "this", "those", "they", "he", "she", 
-                       "the same", "the above", "mentioned", "previous"]
-    
-    # Check for follow-up indicators
-    followup_indicators = ["more", "explain", "elaborate", "tell me more", 
-                           "what about", "how about", "why", "expand"]
-    
-    # Simple reference detection
-    for term in reference_terms:
-        if term in query:
-            return "clarification"
-    
-    # Follow-up detection
-    for indicator in followup_indicators:
-        if indicator in query:
-            return "followup"
-    
-    # Check for overlapping terms (excluding common words)
-    common_words = {"the", "a", "an", "and", "or", "but", "in", "on", "with", 
-                   "is", "are", "was", "were", "be", "to", "for", "of"}
-    
-    # Tokenize and filter
-    query_terms = {term.lower() for term in query.split() 
-                  if term.lower() not in common_words}
-    last_terms = {term.lower() for term in last_query.split() 
-                 if term.lower() not in common_words}
-    
-    # Calculate overlap
-    overlap = query_terms.intersection(last_terms)
-    overlap_ratio = len(overlap) / len(query_terms) if query_terms else 0
-    
-    # High overlap suggests clarification or follow-up
-    if overlap_ratio > 0.3:
-        return "followup"
-    
-    # Default to new topic
-    return "new_topic"
-
-def extract_key_terms(text: str) -> str:
-    """Extract key terms from text, skipping common words"""
-    common_words = {"the", "a", "an", "and", "or", "but", "in", "on", "with", 
-                   "is", "are", "was", "were", "be", "to", "for", "of", "you", 
-                   "me", "what", "who", "how", "why", "when", "where"}
-    
-    # Simple extraction - keep words with 4+ chars that aren't common
-    terms = [word for word in text.lower().split() 
-             if len(word) >= 4 and word not in common_words]
-    
-    # Return top 3-5 terms
-    return " ".join(terms[:5])
 
 # Formatting functions
 def format_sources(docs: List[Document]) -> str:

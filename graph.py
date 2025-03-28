@@ -57,13 +57,10 @@ def extract_query(state: State) -> Dict:
     
     if not current_query:
         return {"query": None}
-        
-    # Handle different query enhancement strategies based on query type
-    enhanced_query = enhance_query_with_history(current_query, history)
-    debug(f"Enhanced query: {enhanced_query}")
     
+    # We no longer need to get the API key here, it will be passed through the node
     return {
-        "query": enhanced_query,
+        "query": current_query,
         "original_query": current_query  # Store original for prompt
     }
 
@@ -71,24 +68,28 @@ def retrieve_docs_node(state: State, api_key: str, chroma_path: str, debug_level
     """Node for retrieving documents from the vector store"""
     query = state.get("query")
     original_query = state.get("original_query", query)
+    history = state.get("history", [])
     
     if not query:
         debug("No query to retrieve documents for")
         return {"retrieval_documents": []}
         
-    # Classify query type
-    history = state.get("history", [])
+    # Enhance query with history using the API key for LLM calls
+    enhanced_query = enhance_query_with_history(query, history, api_key)
+    debug(f"Enhanced query: {enhanced_query}")
+    
+    # Classify query type using LLM
     last_exchange = history[-1] if history else None
     query_type = "new_topic"
     
     if last_exchange:
-        query_type = classify_query_type(original_query, last_exchange)
+        query_type = classify_query_type(original_query, last_exchange, api_key)
         
     debug(f"Query type classified as: {query_type}")
     
     # Retrieve documents
     docs = retrieve_documents(
-        query=query,
+        query=enhanced_query,
         original_query=original_query,
         query_type=query_type,
         api_key=api_key,
@@ -98,7 +99,8 @@ def retrieve_docs_node(state: State, api_key: str, chroma_path: str, debug_level
     
     return {
         "retrieval_documents": docs,
-        "query_type": query_type
+        "query_type": query_type,
+        "query": enhanced_query  # Update with enhanced query
     }
 
 def generate_response(state: State, api_key: str, knowledge_content: str = "") -> Dict:
@@ -227,17 +229,11 @@ def generate_response(state: State, api_key: str, knowledge_content: str = "") -
     response = llm.invoke(formatted_prompt)
     content = response.content
     
-    # Remove any references section that might have been generated despite instructions
-    # content = re.sub(r'\n+References:.*?$', '', content, flags=re.DOTALL)
-    
-    # Append our properly formatted sources
-    final_content = content  #+ sources_str
-    
     # Create AIMessage
-    ai_message = AIMessage(content=final_content)
+    ai_message = AIMessage(content=content)
     
     # Update history with the new exchange
-    new_exchange = {"user": query, "assistant": final_content}
+    new_exchange = {"user": query, "assistant": content}
     updated_history = history + [new_exchange]
     
     return {

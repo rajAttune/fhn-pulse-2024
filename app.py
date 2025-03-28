@@ -35,6 +35,9 @@ args = parser.parse_args()
 
 # Get API key from environment variables
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    print("ERROR: GOOGLE_API_KEY environment variable not set", file=sys.stderr)
+    sys.exit(1)
 
 # Set debug level
 DEBUG_LEVEL = args.debug_level
