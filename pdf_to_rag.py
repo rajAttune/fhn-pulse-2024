@@ -148,14 +148,9 @@ class PDFProcessor:
         # Check if chunks file already exists and not forcing recreation
         if os.path.exists(self.chunks_path) and not self.force:
             debug(f"Chunks file already exists at {self.chunks_path}. Loading...", 1, self.debug_level)
-            # We need to recreate the Document objects from the saved chunks
-            with open(self.chunks_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                # Simple detection to see if we have chunks already
-                if "--- CHUNK 1 ---" in content:
-                    debug("Detected saved chunks, loading them instead of recreating", 1, self.debug_level)
-                    # We need to parse the saved chunks into Document objects
-                    return []  # For now, just return empty list to signal skip chunking
+            # For now, just return empty list to indicate chunks already exist
+            # (We'll actually load chunks in the process method)
+            return []
         
         # Define header splitter to identify sections
         headers_to_split_on = [
@@ -194,7 +189,8 @@ class PDFProcessor:
                     "source": self.pdf_path,
                     "filename": self.pdf_name,
                     "title": self.title,
-                    "org_name": self.org_name
+                    "org_name": self.org_name,
+                    "chunk_type": "text"  # Add chunk type metadata
                 })
                 all_chunks.append(Document(page_content=content, metadata=metadata))
             else:
@@ -206,7 +202,8 @@ class PDFProcessor:
                         "source": self.pdf_path,
                         "filename": self.pdf_name,
                         "title": self.title,
-                        "org_name": self.org_name
+                        "org_name": self.org_name,
+                        "chunk_type": "text"  # Add chunk type metadata
                     })
                 
                 all_chunks.extend(smaller_chunks)
@@ -214,14 +211,6 @@ class PDFProcessor:
         # Enrich with page numbers
         self._enrich_with_page_numbers(all_chunks)
         
-        # Save chunks to file for inspection
-        with open(self.chunks_path, 'w', encoding='utf-8') as f:
-            for i, chunk in enumerate(all_chunks):
-                f.write(f"--- CHUNK {i+1} ---\n")
-                f.write(f"Content:\n{chunk.page_content}\n\n")
-                f.write(f"Metadata:\n{json.dumps(chunk.metadata, indent=2)}\n\n")
-        
-        debug(f"Created {len(all_chunks)} chunks, saved to {self.chunks_path}", 1, self.debug_level)
         self.chunks = all_chunks
         return all_chunks
     
@@ -267,6 +256,28 @@ class PDFProcessor:
         for i, chunk in enumerate(chunks):
             chunk.metadata["page_number"] = page_markers.get(i, 1)
     
+    def write_chunks_to_file(self, chunks: List[Document]) -> None:
+        """Write chunks to a text file for inspection"""
+        debug(f"Writing {len(chunks)} chunks to {self.chunks_path}", 1, self.debug_level)
+        
+        with open(self.chunks_path, 'w', encoding='utf-8') as f:
+            for i, chunk in enumerate(chunks):
+                chunk_type = chunk.metadata.get("chunk_type", "unknown")
+                f.write(f"--- {chunk_type.upper()} CHUNK {i+1} ---\n")
+                f.write(f"Content:\n{chunk.page_content}\n\n")
+                f.write(f"Metadata:\n{json.dumps(chunk.metadata, indent=2)}\n\n")
+    
+    def load_existing_chunks(self) -> List[Document]:
+        """Load existing chunks from the chunks file"""
+        chunks = []
+        if os.path.exists(self.chunks_path):
+            debug(f"Loading existing chunks from {self.chunks_path}", 1, self.debug_level)
+            # In a real application, you'd parse the chunks file to recreate Document objects
+            # This is a simplified implementation that returns an empty list
+            # indicating that chunks should be fetched from the database
+            return []
+        return chunks
+    
     def process(self) -> List[Document]:
         """Run the processing pipeline for a single PDF file"""
         debug(f"Starting PDF processing for {self.pdf_path}", 1, self.debug_level)
@@ -279,8 +290,11 @@ class PDFProcessor:
         self.title = doc_structure["title"]
         self.org_name = doc_structure["org_name"]
         
-        # Create chunks
-        self.create_chunks()
+        # Create or load chunks
+        if os.path.exists(self.chunks_path) and not self.force:
+            self.chunks = self.load_existing_chunks()
+        else:
+            self.chunks = self.create_chunks()
         
         # Return chunks
         return self.chunks
@@ -308,9 +322,9 @@ class ImageProcessor:
         
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # Path for image metadata and chunks
+        # Path for image metadata and parent PDF chunks file
         self.images_metadata_path = os.path.join(self.output_dir, "images_metadata.json")
-        self.image_chunks_path = os.path.join(self.output_dir, "image_chunks.txt")
+        self.chunks_path = os.path.join(self.pdf_dir, f"{self.base_name}_chunks.txt")
         
         # Document for image extraction
         try:
@@ -397,11 +411,11 @@ class ImageProcessor:
         """Extract images from PDF, process them with Gemini, and create chunks"""
         debug(f"Extracting and processing images from {self.pdf_path}", 1, self.debug_level)
         
-        # Check if image chunks already exist and not forcing recreation
-        if os.path.exists(self.image_chunks_path) and not self.force:
-            debug(f"Image chunks file already exists at {self.image_chunks_path}. Loading...", 1, self.debug_level)
-            # For now, just return empty list to signal skip processing
-            return []
+        # Check if images metadata already exists and not forcing recreation
+        if os.path.exists(self.images_metadata_path) and not self.force:
+            debug(f"Images metadata already exists at {self.images_metadata_path}", 1, self.debug_level)
+            # Try to load previously processed image chunks
+            return self.load_existing_image_chunks()
         
         if not self.doc or not self.model:
             debug("Document or Gemini model not available, skipping image processing", 0, self.debug_level)
@@ -493,7 +507,8 @@ class ImageProcessor:
                                 "image_path": image_path,
                                 "section_heading": section_heading,
                                 "width": pix.width,
-                                "height": pix.height
+                                "height": pix.height,
+                                "chunk_type": "image"  # Mark as image chunk
                             }
                         )
                         
@@ -512,16 +527,43 @@ class ImageProcessor:
         with open(self.images_metadata_path, 'w', encoding='utf-8') as f:
             json.dump(self.images_metadata, f, indent=2)
         
-        # Save image chunks to file for inspection
-        with open(self.image_chunks_path, 'w', encoding='utf-8') as f:
-            for i, chunk in enumerate(self.image_chunks):
-                f.write(f"--- IMAGE CHUNK {i+1} ---\n")
-                f.write(f"Content:\n{chunk.page_content}\n\n")
-                f.write(f"Metadata:\n{json.dumps(chunk.metadata, indent=2)}\n\n")
-        
         debug(f"Processed {len(self.image_chunks)} unique images", 1, self.debug_level)
         
         return self.image_chunks
+    
+    def load_existing_image_chunks(self) -> List[Document]:
+        """Load existing image chunks based on saved metadata"""
+        if not os.path.exists(self.images_metadata_path):
+            return []
+        
+        try:
+            with open(self.images_metadata_path, 'r', encoding='utf-8') as f:
+                image_metadata = json.load(f)
+            
+            image_chunks = []
+            for img_info in image_metadata:
+                # Create document chunk for this image
+                image_doc = Document(
+                    page_content=self._format_image_content(img_info),
+                    metadata={
+                        "source": self.pdf_path,
+                        "filename": self.pdf_name,
+                        "page_number": img_info.get("page_num", 1),
+                        "image_path": img_info.get("image_path", ""),
+                        "section_heading": img_info.get("section_heading", "Unknown Section"),
+                        "width": img_info.get("width", 0),
+                        "height": img_info.get("height", 0),
+                        "chunk_type": "image"  # Mark as image chunk
+                    }
+                )
+                image_chunks.append(image_doc)
+            
+            debug(f"Loaded {len(image_chunks)} image chunks from metadata", 1, self.debug_level)
+            return image_chunks
+            
+        except Exception as e:
+            debug(f"Error loading image chunks from metadata: {str(e)}", 0, self.debug_level)
+            return []
     
     def _process_image_with_gemini(self, image_bytes: bytes, page_text: str, img_info: Dict) -> Dict:
         """Process an image using Gemini via LangChain to generate a description and potential questions"""
@@ -806,55 +848,43 @@ class EnhancedPDFProcessor:
             debug("Failed to initialize database", 0, self.debug_level)
             return
         
-        # Process each PDF file for text and add to database
-        text_success_count = 0
-        image_success_count = 0
-        
-        # First pass: Process text from all PDFs
+        # Process each PDF file
         for i, pdf_file in enumerate(pdf_files):
             try:
-                debug(f"Processing text from file {i+1}/{len(pdf_files)}: {pdf_file}", 1, self.debug_level)
-                processor = PDFProcessor(pdf_file, self.debug_level, self.force)
-                chunks = processor.process()
+                debug(f"Processing file {i+1}/{len(pdf_files)}: {pdf_file}", 1, self.debug_level)
                 
-                if chunks:
-                    if self.add_chunks_to_database(chunks):
-                        debug(f"Added {len(chunks)} text chunks from {pdf_file} to database", 1, self.debug_level)
-                        text_success_count += 1
-                else:
-                    debug(f"No text chunks generated for {pdf_file}", 1, self.debug_level)
-            except Exception as e:
-                debug(f"Error processing text from {pdf_file}: {str(e)}", 0, self.debug_level)
-                if self.debug_level >= 2:
-                    import traceback
-                    traceback.print_exc()
-        
-        debug(f"Text processing complete: {text_success_count}/{len(pdf_files)} files processed successfully", 1, self.debug_level)
-        
-        # Second pass: Process images from all PDFs
-        for i, pdf_file in enumerate(pdf_files):
-            try:
+                # Initialize processors
+                text_processor = PDFProcessor(pdf_file, self.debug_level, self.force)
+                
+                # Process text chunks
+                text_chunks = text_processor.process()
+                
+                # Process image chunks
                 base_name = os.path.splitext(os.path.basename(pdf_file))[0]
                 image_output_dir = os.path.join(self.images_dir, base_name)
-                
-                debug(f"Processing images from file {i+1}/{len(pdf_files)}: {pdf_file}", 1, self.debug_level)
                 img_processor = ImageProcessor(pdf_file, image_output_dir, self.debug_level, self.force)
                 image_chunks = img_processor.process()
                 
-                if image_chunks:
-                    if self.add_chunks_to_database(image_chunks):
-                        debug(f"Added {len(image_chunks)} image chunks from {pdf_file} to database", 1, self.debug_level)
-                        image_success_count += 1
+                # Combine all chunks
+                all_chunks = text_chunks + image_chunks
+                
+                # Write combined chunks to a single file
+                if all_chunks:
+                    text_processor.write_chunks_to_file(all_chunks)
+                    
+                    # Add all chunks to database
+                    if self.add_chunks_to_database(all_chunks):
+                        debug(f"Added {len(all_chunks)} chunks from {pdf_file} to database", 1, self.debug_level)
+                    else:
+                        debug(f"Failed to add chunks from {pdf_file} to database", 0, self.debug_level)
                 else:
-                    debug(f"No image chunks generated for {pdf_file}", 1, self.debug_level)
+                    debug(f"No chunks generated for {pdf_file}", 1, self.debug_level)
+                    
             except Exception as e:
-                debug(f"Error processing images from {pdf_file}: {str(e)}", 0, self.debug_level)
+                debug(f"Error processing {pdf_file}: {str(e)}", 0, self.debug_level)
                 if self.debug_level >= 2:
                     import traceback
                     traceback.print_exc()
-        
-        debug(f"Image processing complete: {image_success_count}/{len(pdf_files)} files processed successfully", 1, self.debug_level)
-        debug(f"Total processing complete: {text_success_count} text and {image_success_count} image", 1, self.debug_level)
 
 
 def main():
