@@ -621,11 +621,11 @@ class ImageProcessor:
         """Format the image information into a searchable text chunk"""
         content = f"""# Image on Page {img_info['page_num']} - {img_info['section_heading']}
 
-## Description
-{img_info['description']}
+        ## Description
+        {img_info['description']}
 
-## Potential Questions This Image Answers
-"""
+        ## Potential Questions This Image Answers
+        """
         
         for i, question in enumerate(img_info['potential_questions']):
             content += f"{i+1}. {question}\n"
@@ -867,7 +867,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert PDF files to vector database for RAG with image support")
     parser.add_argument("--input", default="./sources", help="Directory containing PDF files to process (default: ./sources)")
     parser.add_argument("--output", default="./chromadb", help="Output directory for ChromaDB (default: ./chromadb)")
-    parser.add_argument("--debug", type=int, choices=[0, 1, 2], default=1, help="Debug level: 0=none, 1=steps, 2=verbose (default: 1)")
+    parser.add_argument("--debug", type=int, choices=[0, 1, 2], default=2, help="Debug level: 0=none, 1=steps, 2=verbose (default: 2)")
     parser.add_argument("--force", action="store_true", help="Force recreation of all outputs")
     
     args = parser.parse_args()

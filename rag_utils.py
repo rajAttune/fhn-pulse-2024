@@ -153,7 +153,7 @@ def retrieve_documents(
     if not docs:
         return []
     
-    if len(docs) <= 5:
+    if len(docs) <= 7:
         debug(f"Only {len(docs)} documents retrieved, skipping reranking", debug_level)
         return docs
     
@@ -176,7 +176,7 @@ def prioritize_tables(docs: List[Document], debug_level: int = 1) -> List[Docume
     result.extend(tables[:3])  # Up to 3 tables first
     result.extend(non_tables)  # Then add non-tables
     
-    return result[:10]  # Return at most 10 documents
+    return result[:7]  # Return at most 7 documents
 
 def rerank_documents(
     docs: List[Document], 
@@ -251,18 +251,18 @@ def rerank_documents(
                 valid_indices = [idx-1 for idx in ordered_indices if 1 <= idx <= len(docs)]
                 
                 # Reorder documents
-                reranked_docs = [docs[idx] for idx in valid_indices[:5]]
+                reranked_docs = [docs[idx] for idx in valid_indices[:7]]
                 debug(f"Returning {len(reranked_docs)} reranked documents", debug_level)
                 return reranked_docs
             except Exception as e:
                 debug(f"Error parsing reranking indices: {e}", debug_level)
         
         debug("Reranking failed, returning top-k original documents", debug_level)
-        return docs[:5]
+        return docs[:7]
         
     except Exception as e:
         debug(f"Error during reranking: {e}", debug_level)
-        return docs[:5]
+        return docs[:7]
 
 # Query enhancement
 def enhance_query_with_history(query: str, history: List[Dict[str, str]], api_key: str) -> str:
